@@ -1,0 +1,53 @@
+Flask==2.3.3
+Werkzeug==2.3.7
+
+# run.py (Launcher script)
+import os
+import sys
+import webbrowser
+import threading
+import time
+from app import app
+
+def open_browser():
+    """Otwórz przeglądarkę po 1.5 sekundy"""
+    time.sleep(1.5)
+    webbrowser.open('http://localhost:5000')
+
+if __name__ == '__main__':
+    # Sprawdź system operacyjny
+    if sys.platform.startswith('win'):
+        print("🖥️  System: Windows")
+    elif sys.platform.startswith('darwin'):
+        print("🍎 System: macOS")
+    else:
+        print("🐧 System: Linux")
+    
+    # Informacje o dostępie
+    print("\n🚀 Uruchamianie Aplikacji Anty-Prokrastynacyjnej...")
+    print(f"📱 Dostęp z telefonu: http://{get_local_ip()}:5000")
+    print(f"💻 Dostęp z komputera: http://localhost:5000")
+    print(f"🌐 Aplikacja będzie działać jako PWA!")
+    print("\n💡 Wskazówki:")
+    print("   • Na telefonie: otwórz link → Menu → 'Dodaj do ekranu głównego'")
+    print("   • Na komputerze: aplikacja otworzy się w przeglądarce")
+    print("   • Ctrl+C aby zakończyć\n")
+    
+    # Otwórz przeglądarkę automatycznie
+    timer = threading.Timer(1.5, open_browser)
+    timer.start()
+    
+    # Uruchom aplikację
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=False)
+    except KeyboardInterrupt:
+        print("\n👋 Aplikacja została zamknięta")
+
+def get_local_ip():
+    """Pobierz lokalny adres IP"""
+    import socket
+    try:
+        hostname = socket.gethostname()
+        return socket.gethostbyname(hostname)
+    except:
+        return "localhost
