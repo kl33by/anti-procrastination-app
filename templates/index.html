@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aplikacja Anty-Prokrastynacyjna</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#4F46E5">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="AntyProkrastynacja">
+    
+    <!-- Manifest -->
+    <link rel="manifest" href="/static/manifest.json">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    
+    <style>
+        body {
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        .touch-action-manipulation {
+            touch-action: manipulation;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
+    <div class="min-h-screen p-4">
+        <div class="max-w-md mx-auto bg-white rounded-xl shadow-xl overflow-hidden" id="app">
+            <!-- Loading -->
+            <div id="loading" class="p-8 text-center">
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+                <p class="text-gray-600">Ładowanie...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Offline indicator -->
+    <div id="offline-indicator" class="fixed top-4 left-4 right-4 bg-red-500 text-white p-3 rounded-lg shadow-lg transform -translate-y-full transition-transform duration-300 z-50">
+        <div class="flex items-center">
+            <i data-lucide="wifi-off" class="w-5 h-5 mr-2"></i>
+            <span>Brak połączenia z internetem</span>
+        </div>
+    </div>
+
+    <script>
+        class AntiProcrastinationApp {
+            constructor() {
+                this.currentDate = new Date();
+                this.selectedDate = new Date();
+                this.viewMode = 'today';
+                this.tasks = {};
+                this.incompleteTasks = [];
+                this.isOnline = navigator.onLine;
+                this.init();
+            }
+
+            async init() {
+                this.setupEventListeners();
+                await this.loadData();
+                this.render();
+                this.setupPWA();
+                lucide.createIcons();
+            }
+
+            setupEventListeners() {
+                // Online/Offline detection
+                window.addEventListener('online', () => {
+                    this.isOnline = true;
+                    this.hideOfflineIndicator();
+                    this.loadData();
+                });
+
+                window.addEventListener('offline', () => {
+                    this.isOnline = false;
+                    this.showOfflineIndicator();
+                });
+            }
+
+            showOfflineIndicator() {
+                const indicator = document.getElementById('offline-indicator');
+                indicator.style.transform = 'translateY(0)';
+            }
+
+            hideOfflineIndicator() {
+                const indicator = document.getElementById('offline-indicator');
+                indicator.style.transform = 'translateY(-100%)';
+            }
+
+            async loadData() {
+                if (!this.isOnline) return;
+                
+                try {
+                    // Ładuj zadania dla bieżącej daty
+                    const today = this.formatDate(new Date());
+                    const response = await fetch(`/api/tasks/${today}`);
+                    const todayTasks = await response.json();
+                    this.tasks[today] = todayTasks;
+
+                    // Ładuj nieskończone zadania
+                    const incompleteResponse = await fetch('/api/incomplete-tasks');
+                    this.incompleteTasks = await incompleteResponse.json();
+
+                    this.render();
+                } catch (error) {
+                    console.error('Błąd podczas ładowania danych:', error);
+                }
+            }
+
+            async loadTasksForDate(date) {
+                if (!this.isOnline) return;
+                
+                const dateStr = this.formatDate(date);
+                if (this.tasks[dateStr]) return;
+
+                try {
+                    const response = await fetch(`/api/tasks/${dateStr}`);
+                    const tasks = await response.json();
+                    this.tasks[dateStr] = tasks;
+                } catch (error) {
+                    console.error('Błąd podczas ładowania zadań:', error);
+                    this.tasks[dateStr] = [];
+                }
+            }
+
+            formatDate(date) {
+                return date.toISOString().split('T')[0];
+            }
+
+            formatDisplayDate(date) {
+                return date.toLocaleDateString('pl-PL', { 
+                    weekday: 'long', 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                });
+            }
+
+            isToday(date) {
+                return this.formatDate(date) === this.formatDate(new Date());
+            }
+
+            async addTask(taskName, category, date = null) {
+                if (!taskName.trim()) return;
+                
+                const targetDate = date || this.selectedDate;
+                const dateStr = this.formatDate(targetDate);
+
+                const taskData = {
+                    name: taskName.trim(),
+                    category: category
+                };
+
+                if (this.isOnline) {
+                    try {
+                        const response = await fetch(`/api/tasks/${dateStr}`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(taskData)
+                        });
+                        const newTask = await response.json();
+                        
+                        if (!this.tasks[dateStr]) this.tasks[dateStr] = [];
+                        this.tasks[dateStr].push(newTask);
+                    } catch (error) {
+                        console.error('Błąd podczas dodawania zadania:', error);
+                    }
+                } else {
+                    // Offline mode - zapisz lokalnie
+                    const newTask = {
+                        id: Date.now(),
+                        name: taskName.trim(),
+                        category: category,
+                        completed: false
+                    };
+                    
+                    if (!this.tasks[dateStr]) this.tasks[dateStr] = [];
+                    this.tasks[dateStr].push(newTask);
+                }
+
+                this.render();
+            }
+
+            async toggleTask(taskId, date) {
+                const dateStr = this.formatDate(date);
+                const task = this.tasks[dateStr]?.find(t => t.id === taskId);
+                if (!task) return;
+
+                task.completed = !task.completed;
+
+                if (this.isOnline) {
+                    try {
+                        await fetch(`/api/tasks/${dateStr}/${taskId}`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ completed: task.completed })
+                        });
+                    } catch (error) {
+                        console.error('Błąd podczas aktualizacji zadania:', error);
+                    }
+                }
+
+                this.render();
+            }
+
+            async deleteTask(taskId, date) {
+                const dateStr = this.formatDate(date);
+                
+                if (this.isOnline) {
+                    try {
+                        await fetch(`/api/tasks/${dateStr}/${taskId}`, {
+                            method: 'DELETE'
+                        });
+                    } catch (error) {
+                        console.error('Błąd podczas usuwania zadania:', error);
+                    }
+                }
+
+                if (this.tasks[dateStr]) {
+                    this.tasks[dateStr] = this.tasks[dateStr].filter(t => t.id !== taskId);
+                }
+
+                this.render();
+            }
+
+            getTaskStats(tasks) {
+                const completed = tasks?.filter(task => task.completed).length || 0;
+                const total = tasks?.length || 0;
+                const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+                return { completed, total, percentage };
+            }
+
+            render() {
+                const app = document.getElementById('app');
+                const today = this.formatDate(new Date());
+                const todayTasks = this.tasks[today] || [];
+                const todayStats = this.getTaskStats(todayTasks);
+
+                app.innerHTML = `
+                    ${this.renderHeader(todayStats)}
+                    ${this.renderNavigation()}
+                    ${this.renderContent()}
+                `;
+
+                this.attachEventListeners();
+                lucide.createIcons();
+            }
+
+            renderHeader(stats) {
+                return `
+                    <div class="bg-gradient-to-r from-indigo-500 to-purple-600 p-6 text-white">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h1 class="text-2xl font-bold">Mój Planer</h1>
+                                <p class="opacity-90">${this.formatDisplayDate(new Date())}</p>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-3xl font-bold">${stats.percentage}%</div>
+                                <div class="text-sm opacity-90">${stats.completed}/${stats.total} zadań</div>
+                                ${this.incompleteTasks.length > 0 ? `
+                                    <div class="text-xs bg-red-500 px-2 py-1 rounded-full mt-1">
+                                        ${this.incompleteTasks.length} zaległości
+                                    </div>
+                                ` : ''}
+                            </div>
+                        </div>
+                        
+                        <div class="mt-4 bg-white/20 rounded-full h-3">
+                            <div class="bg-white rounded-full h-3 transition-all duration-500" 
+                                 style="width: ${stats.percentage}%"></div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            renderNavigation() {
+                return `
+                    <div class="flex bg-gray-50 border-b">
+                        <button onclick="app.setViewMode('today')" 
+                                class="flex-1 py-3 px-4 text-center font-medium text-sm touch-action-manipulation ${this.viewMode === 'today' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-600'}">
+                            <i data-lucide="target" class="w-4 h-4 inline mr-1"></i>
+                            Dziś
+                        </button>
+                        <button onclick="app.setViewMode('planner')" 
+                                class="flex-1 py-3 px-4 text-center font-medium text-sm touch-action-manipulation ${this.viewMode === 'planner' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-600'}">
+                            <i data-lucide="calendar" class="w-4 h-4 inline mr-1"></i>
+                            Planer
+                        </button>
+                        <button onclick="app.setViewMode('stats')" 
+                                class="flex-1 py-3 px-4 text-center font-medium text-sm touch-action-manipulation ${this.viewMode === 'stats' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-600'}">
+                            <i data-lucide="trending-up" class="w-4 h-4 inline mr-1"></i>
+                            Statystyki
+                        </button>
+                    </div>
+                `;
+            }
+
+            renderContent() {
+                switch (this.viewMode) {
+                    case 'today':
+                        return this.renderTodayView();
+                    case 'planner':
+                        return this.renderPlannerView();
+                    case 'stats':
+                        return this.renderStatsView();
+                    default:
+                        return this.renderTodayView();
+                }
+            }
+
+            renderTodayView() {
+                const today = this.formatDate(new Date());
+                const todayTasks = this.tasks[today] || [];
+
+                return `
+                    <div class="p-6">
+                        ${this.incompleteTasks.length > 0 ? this.renderIncompleteTasks() : ''}
+                        
+                        <div class="mb-6 p-4 bg-gray-50 rounded-lg">
+                            <h3 class="font-semibold mb-3 text-gray-800">Dodaj zadanie na dziś</h3>
+                            <div class="space-y-3">
+                                <input type="text" id="newTaskName" placeholder="Nazwa zadania..." 
+                                       class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                                <div class="flex gap-2">
+                                    <select id="newTaskCategory" class="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
+                                        <option value="Ogólne">Ogólne</option>
+                                        <option value="Rozwój">Rozwój</option>
+                                        <option value="Zdrowie">Zdrowie</option>
+                                        <option value="Praca">Praca</option>
+                                        <option value="Dom">Dom</option>
+                                        <option value="Hobby">Hobby</option>
+                                    </select>
+                                    <button onclick="app.addTaskFromForm()" 
+                                            class="px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors touch-action-manipulation">
+                                        <i data-lucide="plus" class="w-5 h-5"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="space-y-3">
+                            <h3 class="font-semibold text-gray-800">Dzisiejsze zadania</h3>
+                            ${todayTasks.length === 0 ? `
+                                <div class="text-center py-8 text-gray-500">
+                                    <i data-lucide="check-circle" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
+                                    <p>Brak zadań na dziś!</p>
+                                    <p class="text-sm">Dodaj swoje pierwsze zadanie powyżej</p>
+                                </div>
+                            ` : todayTasks.map(task => this.renderTask(task, new Date())).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            renderIncompleteTasks() {
+                return `
+                    <div class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+                        <h3 class="font-semibold text-red-800 mb-3 flex items-center">
+                            <i data-lucide="alert-circle" class="w-5 h-5 mr-2"></i>
+                            Nieskończone zadania (${this.incompleteTasks.length})
+                        </h3>
+                        <div class="space-y-3">
+                            ${this.incompleteTasks.map(task => `
+                                <div class="bg-white border border-red-200 rounded-lg p-3">
+                                    <div class="text-sm text-red-600 mb-1">
+                                        ${new Date(task.original_date).toLocaleDateString('pl-PL')} (${task.days_late} dni temu)
+                                    </div>
+                                    <div class="font-medium text-gray-800 mb-2">${task.name}</div>
+                                    <div class="text-sm text-gray-600 mb-3 italic">
+                                        💬 ${task.ai_comment}
+                                    </div>
+                                    <button onclick="app.moveTaskToToday(${task.id}, '${task.original_date}')"
+                                            class="px-3 py-1 bg-indigo-600 text-white text-sm rounded hover:bg-indigo-700 transition-colors touch-action-manipulation">
+                                        Przenieś na dziś
+                                    </button>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            renderTask(task, date) {
+                return `
+                    <div class="bg-white border rounded-lg p-4 shadow-sm">
+                        <div class="flex items-center gap-3">
+                            <input type="checkbox" ${task.completed ? 'checked' : ''} 
+                                   onchange="app.toggleTask(${task.id}, new Date('${date.toISOString()}'))"
+                                   class="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500">
+                            <div class="flex-1">
+                                <div class="font-medium ${task.completed ? 'line-through text-gray-500' : 'text-gray-800'}">
+                                    ${task.name}
+                                </div>
+                                <div class="text-xs text-gray-500 mt-1">
+                                    <span class="px-2 py-1 bg-gray-100 rounded-full">${task.category}</span>
+                                </div>
+                            </div>
+                            <button onclick="app.deleteTask(${task.id}, new Date('${date.toISOString()}'))" 
+                                    class="p-2 text-gray-400 hover:text-red-600 transition-colors touch-action-manipulation">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+
+            renderPlannerView() {
+                return `
+                    <div class="p-6">
+                        <div class="text-center py-8 text-gray-500">
+                            <i data-lucide="calendar" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
+                            <p>Widok planera</p>
+                            <p class="text-sm">Funkcja w rozwoju</p>
+                        </div>
+                    </div>
+                `;
+            }
+
+            renderStatsView() {
+                return `
+                    <div class="p-6">
+                        <div class="text-center py-8 text-gray-500">
+                            <i data-lucide="trending-up" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
+                            <p>Statystyki</p>
+                            <p class="text-sm">Funkcja w rozwoju</p>
+                        </div>
+                    </div>
+                `;
+            }
+
+            attachEventListeners() {
+                // Enter key na dodawaniu zadań
+                const taskInput = document.getElementById('newTaskName');
+                if (taskInput) {
+                    taskInput.addEventListener('keypress', (e) => {
+                        if (e.key === 'Enter') {
+                            this.addTaskFromForm();
+                        }
+                    });
+                }
+            }
+
+            setViewMode(mode) {
+                this.viewMode = mode;
+                this.render();
+            }
+
+            addTaskFromForm() {
+                const taskName = document.getElementById('newTaskName').value;
+                const category = document.getElementById('newTaskCategory').value;
+                
+                if (taskName.trim()) {
+                    this.addTask(taskName, category, new Date());
+                    document.getElementById('newTaskName').value = '';
+                    document.getElementById('newTaskCategory').value = 'Ogólne';
+                }
+            }
+
+            async moveTaskToToday(taskId, originalDate) {
+                const task = this.incompleteTasks.find(t => t.id === taskId);
+                if (!task) return;
+
+                await this.addTask(task.name, task.category, new Date());
+                
+                // Usuń z listy nieskończonych
+                this.incompleteTasks = this.incompleteTasks.filter(t => t.id !== taskId);
+                
+                // Oznacz oryginalne jako ukończone
+                if (this.isOnline) {
+                    try {
+                        await fetch(`/api/tasks/${originalDate}/${taskId}`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ completed: true })
+                        });
+                    } catch (error) {
+                        console.error('Błąd podczas aktualizacji zadania:', error);
+                    }
+                }
+            }
+
+            setupPWA() {
+                // Service Worker registration
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.register('/static/sw.js')
+                        .then(registration => {
+                            console.log('Service Worker zarejestrowany:', registration);
+                        })
+                        .catch(error => {
+                            console.log('Błąd rejestracji Service Worker:', error);
+                        });
+                }
+
+                // Install prompt
+                let deferredPrompt;
+                window.addEventListener('beforeinstallprompt', (e) => {
+                    e.preventDefault();
+                    deferredPrompt = e;
+                    
+                    // Pokaż przycisk instalacji
+                    const installButton = document.createElement('button');
+                    installButton.textContent = '📱 Zainstaluj aplikację';
+                    installButton.className = 'fixed bottom-4 right-4 bg-indigo-600 text-white px-4 py-2 rounded-lg shadow-lg z-50';
+                    installButton.onclick = () => {
+                        deferredPrompt.prompt();
+                        deferredPrompt.userChoice.then(() => {
+                            deferredPrompt = null;
+                            installButton.remove();
+                        });
+                    };
+                    document.body.appendChild(installButton);
+                    
+                    setTimeout(() => installButton.remove(), 10000); // Usuń po 10s
+                });
+            }
+        }
+
+        // Inicjalizacja aplikacji
+        let app;
+        document.addEventListener('DOMContentLoaded', () => {
+            app = new AntiProcrastinationApp();
+        });
+    </script>
+</body>
+</html>
